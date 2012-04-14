@@ -70,6 +70,7 @@ namespace sfe {
 		void pushFrame(AVPacket *pkt);
 		void popFrame(void);
 		AVPacket *frontFrame(void);
+		AVPacket *takeFrontFrame(void);
 		void flushPendingFrames(void);
 		
 		bool onGetData(Chunk& Data);
@@ -92,6 +93,7 @@ namespace sfe {
 		unsigned m_channelsCount;
 		unsigned m_sampleRate;
 		bool m_isStarving;
+		sf::Time m_prevPlayingOffset;
 	}; // class Movie_audio
 } // namespace sfe
 

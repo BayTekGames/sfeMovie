@@ -295,6 +295,8 @@ namespace sfe {
 
 	void Movie::setPlayingOffset(sf::Time position)
 	{
+		std::cout << "REQUESTED SEEK to " << position.asSeconds() << "s" << std::endl;
+		
 		IFAUDIO(m_audio->preSeek(position));
 		IFVIDEO(m_video->preSeek(position));
 		
@@ -452,6 +454,10 @@ namespace sfe {
 			int64_t seek_pos = (int64_t)(position.asSeconds() * AV_TIME_BASE);
 			int64_t seek_target = av_rescale_q(seek_pos, AV_TIME_BASE_Q, timeBase);
 			
+			std::cout << "video seek pos = " << seek_pos << std::endl;
+			std::cout << "video seek target = " << seek_target << std::endl;
+			std::cout << "video seek s = " << seek_pos / 1000000. << std::endl;
+			
 			if(av_seek_frame(m_avFormatCtx, videoStreamID, seek_target, flags) < 0)
 				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
 		}
@@ -465,10 +471,32 @@ namespace sfe {
 			int64_t seek_pos = (int64_t)(position.asSeconds() * AV_TIME_BASE);
 			int64_t seek_target = av_rescale_q(seek_pos, AV_TIME_BASE_Q, timeBase);
 			
+			std::cout << "audio seek pos = " << seek_pos << std::endl;
+			std::cout << "audio seek target = " << seek_target << std::endl;
+			std::cout << "audio seek s = " << seek_pos / 1000000. << std::endl;
+			
 			if(av_seek_frame(m_avFormatCtx, audioStreamID, seek_target, flags) < 0)
 				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
 		}
 	}
+	
+	/*void Movie::rebaseSynchronization(sf::Time timestamp)
+	{
+		// The resynchronization request comes from the audio handler,
+		// thus we should resynchronize video according to the audio timestamp
+		if (m_hasVideo)
+		{
+			sf::Time pos = m_video->getPlayingOffset();
+			sf::Time frameTime = m_video->getWantedFrameTime();
+			sf::Time diff = sf::milliseconds(m_video->m_currentDTS) - timestamp;
+			
+			//std::cout << "audio pts: " << timestamp.asMilliseconds() << "ms" << std::endl;
+			//std::cout << "diff: " << diff.asMilliseconds() << "ms" << std::endl;
+			
+			//if (abs(diff.asMilliseconds()) > 100)
+				//m_video->requestResynchronization(timestamp);
+		}
+	}*/
 	
 	bool Movie::saveFrame(AVPacket *frame)
 	{

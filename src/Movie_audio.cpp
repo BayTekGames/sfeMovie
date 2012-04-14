@@ -44,6 +44,7 @@ namespace sfe {
 	m_channelsCount(0),
 	m_sampleRate(0),
 	m_isStarving(false)
+	//m_prevPlayingOffset(sf::Time::Zero)
 	{
 		
 	}
@@ -154,7 +155,16 @@ namespace sfe {
 	void Movie_audio::postSeek(sf::Time position)
 	{
 		sf::SoundStream::setPlayingOffset(position);
-		sf::SoundStream::play();
+		
+		if (m_parent.getStatus() == Movie::Playing)
+		{
+			sf::SoundStream::play();
+		}
+		else
+		{
+			// Workaround for https://github.com/LaurentGomila/SFML/issues/203
+			sf::SoundStream::stop();
+		}
 	}
 	 
 	int Movie_audio::getStreamID()
@@ -220,7 +230,7 @@ namespace sfe {
 			
 			
 			// Get the front audio packet
-			audioPacket = frontFrame();
+			audioPacket = takeFrontFrame();
 			
 			// Decode it
 			res = avcodec_decode_audio3(m_codecCtx,
@@ -233,6 +243,26 @@ namespace sfe {
 			}
 			else
 			{
+				AVRational timeBase = m_parent.getAVFormatContext()->streams[m_streamID]->time_base;
+				int64_t seek_target = av_rescale_q(audioPacket->pts, timeBase, AV_TIME_BASE_Q);
+				//double seconds = seek_target / 1000000.;
+				
+				//if (m_prevPlayingOffset != getPlayingOffset())
+				{
+					/*
+					if (seek_target)
+					{
+						std::cout << "audio getPlayingOffset() = " << getPlayingOffset().asMilliseconds() << "ms" << std::endl;
+						*/
+					std::cout << "audio pts = " << seek_target / 1000 << "ms" << std::endl;
+					std::cout << "audio dts : " << av_rescale_q(audioPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000 << "ms" << std::endl;
+					/*
+						m_parent.rebaseSynchronization(sf::seconds(seconds));
+					}*/
+					
+					m_prevPlayingOffset = getPlayingOffset();
+				}
+				
 				audioPacketOffset += frame_size;
 
 				if (m_codecCtx->sample_fmt != SAMPLE_FMT_S16)
@@ -248,7 +278,8 @@ namespace sfe {
 				sfBuffer.sampleCount = audioPacketOffset / sizeof(sf::Int16);
 			}
 			
-			popFrame();
+			av_free_packet(audioPacket);
+			av_free(audioPacket);
 		}
 	}
 		
@@ -279,6 +310,21 @@ namespace sfe {
 		
 		sf::Lock l(m_packetListMutex);
 		return m_packetList.front();
+	}
+	
+	AVPacket *Movie_audio::takeFrontFrame(void)
+	{
+		AVPacket *pkt = NULL;
+		sf::Lock l(m_packetListMutex);
+		
+		assert(!m_packetList.empty());
+		pkt = m_packetList.front();
+		m_packetList.pop();
+		m_pendingDataLength -= pkt->size;
+		
+		assert(pkt != NULL);
+		
+		return pkt;
 	}
 	
 	void Movie_audio::flushPendingFrames(void)

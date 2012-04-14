@@ -71,7 +71,9 @@ namespace sfe {
 	m_decodingTime(sf::Time::Zero),
 	m_timer(),
 	m_runThread(false),
-	m_size(0, 0)
+	m_size(0, 0),
+	m_currentPTS(0),
+	m_currentDTS(0)
 	{
 		
 	}
@@ -420,6 +422,13 @@ namespace sfe {
 		}
 	}
 	
+	
+	sf::Time Movie_video::getPlayingOffset() const
+	{
+		return m_wantedFrameTime * (sf::Int64)m_displayedFrameCount;
+	}
+	
+	
 	bool Movie_video::getLateState(sf::Time& waitTime) const
 	{
 		bool flag = false;
@@ -479,9 +488,29 @@ namespace sfe {
 	
 	void Movie_video::postSeek(sf::Time position)
 	{
-		m_displayedFrameCount = position.asMilliseconds() / m_wantedFrameTime.asMilliseconds();
-		m_running = 1;
+		m_displayedFrameCount = position.asSeconds() / m_wantedFrameTime.asSeconds();
+		
+		std::cout << "calculated pos : " << m_displayedFrameCount * m_wantedFrameTime.asSeconds() << std::endl;
+		
+		if (m_parent.getStatus() == Movie::Playing)
+			m_running = 1;
+		else
+		{
+			// Load first image
+			loadNextImage(false);
+			m_tex.update((sf::Uint8*)m_backRGBAFrame->data[0]);
+			m_backImageReady = 0;
+		}
 	}
+	
+	/*
+	void Movie_video::requestResynchronization(sf::Time position)
+	{
+		// Setting m_displayedFrameCount will make the decoder notice we're late
+		std::cout << "before resync : " << m_displayedFrameCount << std::endl; 
+		m_displayedFrameCount = position.asSeconds() / m_wantedFrameTime.asSeconds();
+		std::cout << "after resync : " << m_displayedFrameCount << std::endl;
+	}*/
 	
 	
 	bool Movie_video::preLoad(void)
@@ -498,8 +527,8 @@ namespace sfe {
 		// Load first image
 		loadNextImage(false);
 		m_tex.update((sf::Uint8*)m_backRGBAFrame->data[0]);
+		m_backImageReady = 0;
 		
-		m_backImageReady = 1;
 		return true;
 	}
 	
@@ -562,10 +591,9 @@ namespace sfe {
 		}
 		
 		// Get the front frame and decode it
-		AVPacket *videoPacket = frontFrame();
-		int res;
-		res = avcodec_decode_video2(m_codecCtx, m_rawFrame, &didDecodeFrame,
-									videoPacket); // 20% (40% of total function) on macosx; 18.3% (36% of total) on windows
+		AVPacket *videoPacket = takeFrontFrame();
+		int res = avcodec_decode_video2(m_codecCtx, m_rawFrame, &didDecodeFrame,
+										videoPacket); // 20% (40% of total function) on macosx; 18.3% (36% of total) on windows
 		
 		if (!isLate)
 		{
@@ -578,6 +606,15 @@ namespace sfe {
 			{
 				if (didDecodeFrame)
 				{
+					AVRational timeBase = m_parent.getAVFormatContext()->streams[m_streamID]->time_base;
+					int64_t seek_target = av_rescale_q(videoPacket->pts, timeBase, AV_TIME_BASE_Q);
+					float seconds = seek_target / 1000000.;
+					std::cout << "video pts : " << seek_target / 1000 << "ms" << std::endl;
+					std::cout << "video dts : " << av_rescale_q(videoPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000 << "ms" << std::endl;
+					
+					m_currentPTS = av_rescale_q(videoPacket->pts, timeBase, AV_TIME_BASE_Q) / 1000;
+					m_currentDTS = av_rescale_q(videoPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000;
+					
 					// Convert the frame to RGBA
 					// FIXME: crash here (in the function sws_getDefaultFilter()
 					// called by sws_scale()) when GuardMalloc is enabled, but
@@ -603,8 +640,9 @@ namespace sfe {
 			}
 		}
 		
-		popFrame();
 		m_displayedFrameCount++;
+		av_free_packet(videoPacket);
+		av_free(videoPacket);
 		
 		return flag;
 	}
@@ -634,6 +672,18 @@ namespace sfe {
 		
 		sf::Lock l(m_packetListMutex);
 		return m_packetList.front();
+	}
+	
+	AVPacket *Movie_video::takeFrontFrame(void)
+	{
+		AVPacket *pkt;
+		sf::Lock l(m_packetListMutex);
+		
+		assert(!m_packetList.empty());
+		pkt = m_packetList.front();
+		m_packetList.pop();
+		
+		return pkt;
 	}
 	
 	void Movie_video::flushPendingFrames(void)

@@ -62,10 +62,12 @@ namespace sfe {
 		void update(void); // Swaping and synching thread
 		void decode(void); // Decoding thread
 		
+		sf::Time getPlayingOffset() const;
 		bool getLateState(sf::Time& waitTime) const;
 		bool isStarving(void);
 		void preSeek(sf::Time position);
 		void postSeek(sf::Time position);
+		void requestResynchronization(sf::Time position);
 		//void SkipFrames(unsigned count);
 		
 		void swapImages(bool unconditionned = false);
@@ -81,6 +83,7 @@ namespace sfe {
 		void pushFrame(AVPacket *pkt);
 		void popFrame(void);
 		AVPacket *frontFrame(void);
+		AVPacket *takeFrontFrame(void);
 		void flushPendingFrames(void);
 		void watchThread(void);
 		
@@ -123,6 +126,8 @@ namespace sfe {
 		sf::Time m_decodingTime;	// How long does it take to decode one frame? (used to know more precisely when we should decode and swap)
 		sf::Clock m_timer;			// Used to compute the decoding time
 		bool m_runThread;			// Should the updating and decoding still run?
+		sf::Int64 m_currentPTS;
+		sf::Int64 m_currentDTS;
 	};
 } // namespace sfe
 

@@ -76,13 +76,16 @@ namespace sfe {
 			Playing  //!< Movie is playing
 		};
 		
+		
 		/** @brief Default constructor
 		 */
 		Movie(void);
 		
+		
 		/** @brief Default destructor
 		 */
 		~Movie(void);
+		
 		
 		/** @brief Attemps to open a media file (movie or audio)
 		 *
@@ -95,9 +98,11 @@ namespace sfe {
 		 */
 		bool openFromFile(const std::string& filename);
 		
+		
 		/** @brief Starts the movie playback
 		 */
 		void play(void);
+		
 		
 		/** @brief Pauses the movie playback
 		 *
@@ -106,9 +111,11 @@ namespace sfe {
 		 */
 		void pause(void);
 		
+		
 		/** @brief Stops the movie playback. The playing offset is reset to the beginning.
 		 */
 		void stop(void);
+		
 		
 		/** @brief Returns whether the opened movie contains a video track (images)
 		 *
@@ -116,11 +123,13 @@ namespace sfe {
 		 */
 		bool hasVideoTrack(void) const;
 		
+		
 		/** @brief Returns whether the opened movie contains an audio track
 		 *
 		 * @return true if the opened movie contains an audio track, false otherwise
 		 */
 		bool hasAudioTrack(void) const;
+		
 		
 		/** @brief Sets the sound's volume (default is 100)
 		 *
@@ -128,11 +137,13 @@ namespace sfe {
 		 */
 		void setVolume(float volume);
 		
+		
 		/** @brief Returns the current sound's volume
 		 *
 		 * @return the sound's volume, in range [0, 100]
 		 */
 		float getVolume(void) const;
+		
 		
 		/** @brief Returns the duration of the movie
 		 *
@@ -140,16 +151,19 @@ namespace sfe {
 		 */
 		sf::Time getDuration(void) const;
 		
+		
 		/** @brief Returns the size (width, height) of the movie
 		 *
 		 * @return the size of the movie
 		 */
 		sf::Vector2i getSize(void) const;
 		
+		
 		/** @brief See resizeToFrame(sf::IntRect, bool)
 		 * @see resizeToFrame(sf::IntRect, bool)
 		 */
 		void resizeToFrame(int x, int y, int width, int height, bool preserveRatio = true);
+		
 		
 		/** @brief Scales the movie to fit the requested frame.
 		 *
@@ -161,11 +175,13 @@ namespace sfe {
 		 */
 		void resizeToFrame(sf::IntRect frame, bool preserveRatio = true);
 		
+		
 		/** @brief Returns the amount of video frames per second
 		 *
 		 * @return the video frame rate
 		 */
 		float getFramerate(void) const;
+		
 		
 		/** @brief Returns the amount of audio samples per second
 		 *
@@ -173,11 +189,13 @@ namespace sfe {
 		 */
 		unsigned int getSampleRate(void) const;
 		
+		
 		/** @brief Returns the count of audio channels
 		 *
 		 * @return the channels' count
 		 */
 		unsigned int getChannelCount(void) const;
+		
 		
 		/** @brief Returns the current status of the movie
 		 *
@@ -185,15 +203,21 @@ namespace sfe {
 		 */
 		Status getStatus(void) const;
 		
+		
 		/* @brief Sets the current playing position in the movie
+		 *
+		 * @param position The new playing position, relative to the beginning
+		 * of the movie
 		 */
 		void setPlayingOffset(sf::Time position);
+		
 		
 		/** @brief Returns the current playing position in the movie
 		 *
 		 * @return the playing position
 		 */
 		sf::Time getPlayingOffset(void) const;
+		
 		
 		/** @brief Returns a const reference to the movie texture currently being displayed.
 		 *
@@ -207,22 +231,20 @@ namespace sfe {
 		 */
 		const sf::Texture& getCurrentFrame(void) const;
 		
-		//void SetLoop(bool Loop);
-		//bool GetLoop() const;
 		
-		/** @brief Choose whether to print debug messages
+		/** @brief Choose whether to display debug messages
 		 *
 		 * When enabled, the following debug messages can be dispayed:
 		 * - the attributes of the opened movie 
-		 * - a notification message when a frame was not decoded
+		 * - a notification message when a frame has not been decoded
 		 * - a notification message when a frame has been skipped
 		 * (because the movie playback was late)
 		 *
 		 * Disabling the debug messages does not prevent sfe::Movie from
-		 * displaying the error messages.
-		 * The debug messages are always sent to the cerr output stream.
+		 * displaying the 'error' messages.
+		 * The debug messages are always sent to the std::cerr output stream.
 		 *
-		 * @param flag true to enable the debug messages outputting, false otherwise
+		 * @param flag true to enable the debug messages output, false otherwise
 		 */
 		static void useDebugMessages(bool flag = true);
 		
@@ -247,6 +269,7 @@ namespace sfe {
 		void setDuration(sf::Time duration);
 		bool readFrameAndQueue(void);
 		void seekToPosition(sf::Time position);
+		//void rebaseSynchronization(sf::Time timestamp);
 		bool saveFrame(AVPacketRef frame);
 		void starvation(void);
 		void watch(void);
