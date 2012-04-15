@@ -460,6 +460,8 @@ namespace sfe {
 			
 			if(av_seek_frame(m_avFormatCtx, videoStreamID, seek_target, flags) < 0)
 				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
+			else
+				avcodec_flush_buffers(m_video->m_codecCtx);
 		}
 		
 		if (m_hasAudio)
@@ -477,6 +479,8 @@ namespace sfe {
 			
 			if(av_seek_frame(m_avFormatCtx, audioStreamID, seek_target, flags) < 0)
 				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
+			else
+				avcodec_flush_buffers(m_audio->m_codecCtx);
 		}
 	}
 	
