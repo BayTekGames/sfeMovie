@@ -56,6 +56,8 @@ namespace sfe {
 		int getStreamID(void) const;
 		const sf::Vector2i& getSize(void) const;
 		sf::Time getWantedFrameTime(void) const;
+		sf::Int64 getLatestPacketTimestamp(void) const;
+		AVCodecContext *getCodecContext(void) const;
 		const sf::Texture& getCurrentFrame(void) const;
 		void ensureTextureUpdate(void) const;
 		
@@ -67,8 +69,6 @@ namespace sfe {
 		bool isStarving(void);
 		void preSeek(sf::Time position);
 		void postSeek(sf::Time position);
-		void requestResynchronization(sf::Time position);
-		//void SkipFrames(unsigned count);
 		
 		void swapImages(bool unconditionned = false);
 		sf::Texture& frontTexture(void);
@@ -87,7 +87,7 @@ namespace sfe {
 		void flushPendingFrames(void);
 		void watchThread(void);
 		
-	//private:
+	private:
 		// ------------------------- Video attributes --------------------------
 		Movie& m_parent;			// Link to the parent movie
 		
@@ -101,6 +101,9 @@ namespace sfe {
 		sf::Uint8 *m_pictureBuffer; // Buffer used to convert image from pixel matrix to simple array
 		struct SwsContext *m_swsCtx;// Used for converting image from YUV422 to RGBA
 		
+		sf::Mutex m_oneDecodeAtATime; // Prevent several decoding at the same time (when seeking)
+		sf::Int64 m_latestPacketTimestamp; // The timestamp extracted from the latest decoded video packet
+		
 		// Packets' queueing stuff
 		std::queue <AVPacket *> m_packetList;// Awaiting video packets (that will be decoded later)
 		sf::Mutex m_packetListMutex;// Prevent packets' list from being/modified and accessed at the same time from several threads
@@ -113,7 +116,6 @@ namespace sfe {
 		// Image swaping
 		mutable sf::Mutex m_imageSwapMutex;// Prevent the textures from being swaped while being updated
 		mutable Condition m_backImageReady;	// condition to wait until the image is ready for swaping
-		//mutable bool m_isBackFrameReady;
 		unsigned m_imageIndex;		// To know which image is the front or back one
 		mutable sf::Texture m_tex;			// The image in VRAM
 		sf::Sprite m_sprite;		// Sprite bound to the front image

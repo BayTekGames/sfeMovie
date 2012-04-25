@@ -77,6 +77,16 @@ namespace sfe {
 		};
 		
 		
+		/** @brief Constants telling how to seek
+		 */
+		enum SeekingMethod
+		{
+			FastApproximativeSeeking,	//!< Instantly seek to a perfect image but no always at the exact wanted position
+			FastLossySeeking,			//!< Instantly seek to a possibly incomplete image at the exact wanted position
+			SlowExactSeeking			//!< Seek to a perfect image at the exact wanted position (slower)
+		};
+		
+		
 		/** @brief Default constructor
 		 */
 		Movie(void);
@@ -209,7 +219,7 @@ namespace sfe {
 		 * @param position The new playing position, relative to the beginning
 		 * of the movie
 		 */
-		void setPlayingOffset(sf::Time position);
+		void setPlayingOffset(sf::Time position, SeekingMethod method = SlowExactSeeking);
 		
 		
 		/** @brief Returns the current playing position in the movie
@@ -268,7 +278,10 @@ namespace sfe {
 		void setEofReached(bool flag);
 		void setDuration(sf::Time duration);
 		bool readFrameAndQueue(void);
-		void seekToPosition(sf::Time position);
+		void seekToPosition(sf::Time position, SeekingMethod method);
+		void doFastApproximativeSeeking(sf::Time position);
+		void doFastLossySeeking(sf::Time position);		
+		void doSlowExactSeeking(sf::Time position);		
 		//void rebaseSynchronization(sf::Time timestamp);
 		bool saveFrame(AVPacketRef frame);
 		void starvation(void);
@@ -282,6 +295,7 @@ namespace sfe {
 		bool m_eofReached;
 		sf::Mutex m_stopMutex;
 		sf::Mutex m_readerMutex;
+		sf::Mutex m_oneDecodeAtATime;
 		sf::Thread m_watchThread;
 		Condition *m_shouldStopCond;
 		

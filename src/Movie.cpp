@@ -50,14 +50,15 @@ namespace sfe {
 	m_hasAudio(false),
 	m_eofReached(false),
 	m_stopMutex(),
+	m_readerMutex(),
+	m_watchThread(&Movie::watch, this),
+	m_shouldStopCond(new Condition()),
 	m_status(Stopped),
 	m_duration(sf::Time::Zero),
 	m_overallTimer(),
 	m_progressAtPause(sf::Time::Zero),
 	m_video(new Movie_video(*this)),
-	m_audio(new Movie_audio(*this)),
-	m_watchThread(&Movie::watch, this),
-	m_shouldStopCond(new Condition())
+	m_audio(new Movie_audio(*this))
 	{
 	}
 
@@ -160,7 +161,7 @@ namespace sfe {
 			}
 			else
 			{
-				//std::cout << "synch according to progrAtPse=" << m_progressAtPause << " + elapsdTme=" << m_overallTimer.GetElapsedTime() << std::endl;
+				//std::cout << "synch according to progrAtPse=" << m_progressAtPause.asMilliseconds() << " + elapsdTme=" << m_overallTimer.getElapsedTime().asMilliseconds() << std::endl;
 				m_progressAtPause += m_overallTimer.getElapsedTime();
 			}
 			
@@ -293,14 +294,12 @@ namespace sfe {
 		return m_status;
 	}
 
-	void Movie::setPlayingOffset(sf::Time position)
+	void Movie::setPlayingOffset(sf::Time position, SeekingMethod method)
 	{
-		std::cout << "REQUESTED SEEK to " << position.asSeconds() << "s" << std::endl;
-		
 		IFAUDIO(m_audio->preSeek(position));
 		IFVIDEO(m_video->preSeek(position));
 		
-		seekToPosition(position);
+		seekToPosition(position, method);
 		
 		m_progressAtPause = position;
 		m_overallTimer.restart();
@@ -441,66 +440,206 @@ namespace sfe {
 	}
 	
 	
-	void Movie::seekToPosition(sf::Time position)
+	void Movie::seekToPosition(sf::Time position, SeekingMethod method)
 	{
 		sf::Lock l(m_readerMutex);
+		
+		if (method == FastApproximativeSeeking)
+		{
+			doFastApproximativeSeeking(position);
+		}
+		else if (method == FastLossySeeking)
+		{
+			doFastLossySeeking(position);
+		}
+		else if (method == SlowExactSeeking)
+		{
+			doSlowExactSeeking(position);
+		}
+	}
+	
+	
+	void Movie::doFastApproximativeSeeking(sf::Time position)
+	{
+		int64_t ref_position = (int64_t)(position.asSeconds() * AV_TIME_BASE);
 		
 		if (m_hasVideo)
 		{
 			int videoStreamID = m_video->getStreamID();
+			
+			// Compute the seeking target and av_seek_frame() flags
 			AVRational timeBase = m_avFormatCtx->streams[videoStreamID]->time_base;
 			int flags = (position < getPlayingOffset()) ? AVSEEK_FLAG_BACKWARD : 0;
+			int64_t seek_target = av_rescale_q(ref_position, AV_TIME_BASE_Q, timeBase);
 			
-			int64_t seek_pos = (int64_t)(position.asSeconds() * AV_TIME_BASE);
-			int64_t seek_target = av_rescale_q(seek_pos, AV_TIME_BASE_Q, timeBase);
-			
-			std::cout << "video seek pos = " << seek_pos << std::endl;
-			std::cout << "video seek target = " << seek_target << std::endl;
-			std::cout << "video seek s = " << seek_pos / 1000000. << std::endl;
-			
+			// Seek
 			if(av_seek_frame(m_avFormatCtx, videoStreamID, seek_target, flags) < 0)
 				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
 			else
-				avcodec_flush_buffers(m_video->m_codecCtx);
+				avcodec_flush_buffers(m_video->getCodecContext());
+			
+			// Update video timestamp
+			m_video->loadNextImage(true);
+			
+			// We sought far away from the position we wanted
+			if (abs(m_video->getLatestPacketTimestamp() - (ref_position / 1000)) > 20000)
+			{
+				if (usesDebugMessages())
+					std::cerr << "*** warning: Movie::seekToPosition() - movie has incorrect key frame index or is badly handled by FFmpeg. Falling back to FastLossySeeking method." << std::endl;
+				
+				if(av_seek_frame(m_avFormatCtx, videoStreamID, seek_target, flags | AVSEEK_FLAG_ANY) < 0)
+					std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
+				else
+					avcodec_flush_buffers(m_video->getCodecContext());
+			}
 		}
-		
-		if (m_hasAudio)
+		else if (m_hasAudio)
 		{
 			int audioStreamID = m_audio->getStreamID();
+			
+			// Compute the seeking target and av_seek_frame() flags
 			AVRational timeBase = m_avFormatCtx->streams[audioStreamID]->time_base;
 			int flags = (position < getPlayingOffset()) ? AVSEEK_FLAG_BACKWARD : 0;
+			int64_t seek_target = av_rescale_q(ref_position, AV_TIME_BASE_Q, timeBase);
 			
-			int64_t seek_pos = (int64_t)(position.asSeconds() * AV_TIME_BASE);
-			int64_t seek_target = av_rescale_q(seek_pos, AV_TIME_BASE_Q, timeBase);
-			
-			std::cout << "audio seek pos = " << seek_pos << std::endl;
-			std::cout << "audio seek target = " << seek_target << std::endl;
-			std::cout << "audio seek s = " << seek_pos / 1000000. << std::endl;
-			
+			// Seek
 			if(av_seek_frame(m_avFormatCtx, audioStreamID, seek_target, flags) < 0)
 				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
 			else
-				avcodec_flush_buffers(m_audio->m_codecCtx);
+				avcodec_flush_buffers(m_audio->getCodecContext());
 		}
 	}
 	
-	/*void Movie::rebaseSynchronization(sf::Time timestamp)
+	
+	void Movie::doFastLossySeeking(sf::Time position)
 	{
-		// The resynchronization request comes from the audio handler,
-		// thus we should resynchronize video according to the audio timestamp
+		int64_t ref_position = (int64_t)(position.asSeconds() * AV_TIME_BASE);
+		
 		if (m_hasVideo)
 		{
-			sf::Time pos = m_video->getPlayingOffset();
-			sf::Time frameTime = m_video->getWantedFrameTime();
-			sf::Time diff = sf::milliseconds(m_video->m_currentDTS) - timestamp;
+			int videoStreamID = m_video->getStreamID();
 			
-			//std::cout << "audio pts: " << timestamp.asMilliseconds() << "ms" << std::endl;
-			//std::cout << "diff: " << diff.asMilliseconds() << "ms" << std::endl;
+			// Compute the seeking target and av_seek_frame() flags
+			AVRational timeBase = m_avFormatCtx->streams[videoStreamID]->time_base;
+			int flags = (position < getPlayingOffset()) ? AVSEEK_FLAG_BACKWARD : 0;
+			int64_t seek_target = av_rescale_q(ref_position, AV_TIME_BASE_Q, timeBase);
 			
-			//if (abs(diff.asMilliseconds()) > 100)
-				//m_video->requestResynchronization(timestamp);
+			// Seek
+			if(av_seek_frame(m_avFormatCtx, videoStreamID, seek_target, flags | AVSEEK_FLAG_ANY) < 0)
+				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
+			else
+				avcodec_flush_buffers(m_video->getCodecContext());
+			
+			// Update video timestamp
+			m_video->loadNextImage(true);
 		}
-	}*/
+		else if (m_hasAudio)
+		{
+			int audioStreamID = m_audio->getStreamID();
+			
+			// Compute the seeking target and av_seek_frame() flags
+			AVRational timeBase = m_avFormatCtx->streams[audioStreamID]->time_base;
+			int flags = (position < getPlayingOffset()) ? AVSEEK_FLAG_BACKWARD : 0;
+			int64_t seek_target = av_rescale_q(ref_position, AV_TIME_BASE_Q, timeBase);
+			
+			// Seek
+			if(av_seek_frame(m_avFormatCtx, audioStreamID, seek_target, flags | AVSEEK_FLAG_ANY) < 0)
+				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
+			else
+				avcodec_flush_buffers(m_audio->getCodecContext());
+		}
+	}
+	
+	
+	void Movie::doSlowExactSeeking(sf::Time position)
+	{
+		int64_t ref_position = (int64_t)(position.asSeconds() * AV_TIME_BASE);
+		
+		if (m_hasVideo)
+		{
+			int videoStreamID = m_video->getStreamID();
+			
+			// Compute the seeking target and av_seek_frame() flags
+			AVRational timeBase = m_avFormatCtx->streams[videoStreamID]->time_base;
+			int flags = (position < getPlayingOffset()) ? AVSEEK_FLAG_BACKWARD : 0;
+			int64_t seek_target = av_rescale_q(ref_position, AV_TIME_BASE_Q, timeBase);
+			
+			// Seek
+			if(av_seek_frame(m_avFormatCtx, videoStreamID, seek_target, flags) < 0)
+				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
+			else
+				avcodec_flush_buffers(m_video->getCodecContext());
+			
+			// Update timestamp
+			m_video->loadNextImage(true);
+			
+			// We sought far away from the position we wanted
+			if (abs(m_video->getLatestPacketTimestamp() - (ref_position / 1000)) > 20000) // 
+			{
+				if (usesDebugMessages())
+					std::cerr << "*** warning: Movie::seekToPosition() - movie has incorrect key frame index or is badly handled by FFmpeg. Falling back to FastLossySeeking method." << std::endl;
+				
+				if(av_seek_frame(m_avFormatCtx, videoStreamID, seek_target, flags | AVSEEK_FLAG_ANY) < 0)
+					std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
+				else
+					avcodec_flush_buffers(m_video->getCodecContext());
+			}
+			else
+			{
+				// we sought too late
+				if (m_video->getLatestPacketTimestamp() > ref_position / 1000)
+				{
+					int64_t seek_pos = ref_position;
+					
+					do {
+						// rewind by 1s
+						seek_pos -= AV_TIME_BASE;
+						
+						// recompute seek target
+						seek_target = av_rescale_q(seek_pos, AV_TIME_BASE_Q, timeBase);
+						
+						// seek
+						if(av_seek_frame(m_avFormatCtx, videoStreamID, seek_target, flags) < 0)
+							std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
+						else
+							avcodec_flush_buffers(m_video->getCodecContext());
+						
+						// update PTS
+						// FIXME: what about movies that have no PTS ?
+						m_video->loadNextImage(true);
+					} while (seek_pos > 0 && m_video->getLatestPacketTimestamp() > ref_position / 1000);
+				}
+				
+				// if we sought too early or rewound a bit too much (the previous key frame was too early)
+				// NB: this is was is taking time in this method
+				if (abs(ref_position / 1000 - m_video->getLatestPacketTimestamp()) > (m_video->getWantedFrameTime() * (sf::Int64)3).asMilliseconds())
+				{
+					while (m_video->getLatestPacketTimestamp() < ref_position / 1000)
+					{
+						m_video->loadNextImage(true);
+					}
+				}
+				
+				// TODO: do the same as above but for audio
+			}
+		}
+		else if (m_hasAudio)
+		{
+			int audioStreamID = m_audio->getStreamID();
+			
+			// Compute the seeking target and av_seek_frame() flags
+			AVRational timeBase = m_avFormatCtx->streams[audioStreamID]->time_base;
+			int flags = (position < getPlayingOffset()) ? AVSEEK_FLAG_BACKWARD : 0;
+			int64_t seek_target = av_rescale_q(ref_position, AV_TIME_BASE_Q, timeBase);
+			
+			// Seek
+			if(av_seek_frame(m_avFormatCtx, audioStreamID, seek_target, flags) < 0)
+				std::cerr << "*** error: Movie::seekToPosition() - error while seeking" << std::endl;
+			else
+				avcodec_flush_buffers(m_audio->getCodecContext());
+		}
+	}
+	
 	
 	bool Movie::saveFrame(AVPacket *frame)
 	{

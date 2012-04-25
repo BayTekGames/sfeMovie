@@ -43,11 +43,13 @@ namespace sfe {
 	m_codecCtx(NULL),
 	m_codec(NULL),
 	m_rawFrame(NULL),
-	m_backRGBAFrame(NULL),
 	m_frontRGBAFrame(NULL),
+	m_backRGBAFrame(NULL),
 	m_streamID(-1),
 	m_pictureBuffer(NULL), // Buffer used to convert image from pixel matrix to simple array
 	m_swsCtx(NULL),
+	m_oneDecodeAtATime(),
+	m_latestPacketTimestamp(0),
 	
 	// Packets' queueing stuff
 	m_packetList(),
@@ -64,16 +66,14 @@ namespace sfe {
 	m_tex(),
 	
 	// Miscellaneous parameters
-	m_isStarving(false),
 	m_sprite(),
+	m_size(0, 0),
+	m_isStarving(false),
 	m_wantedFrameTime(sf::Time::Zero),
 	m_displayedFrameCount(0),
 	m_decodingTime(sf::Time::Zero),
 	m_timer(),
-	m_runThread(false),
-	m_size(0, 0),
-	m_currentPTS(0),
-	m_currentDTS(0)
+	m_runThread(false)
 	{
 		
 	}
@@ -391,6 +391,16 @@ namespace sfe {
 		return m_wantedFrameTime;
 	}
 	
+	sf::Int64 Movie_video::getLatestPacketTimestamp(void) const
+	{
+		return m_latestPacketTimestamp;
+	}
+	
+	AVCodecContext *Movie_video::getCodecContext(void) const
+	{
+		return m_codecCtx;
+	}
+	
 	const sf::Texture& Movie_video::getCurrentFrame(void) const
 	{
 		ensureTextureUpdate();
@@ -456,7 +466,7 @@ namespace sfe {
 		{
 			// don't skip a frame if we just have one frame late,
 			// it may be because of a occasional slowdown
-			if (movieTime < realTime - m_wantedFrameTime && m_decodingTime > sf::Time::Zero)
+			if (movieTime < realTime - (m_wantedFrameTime * (sf::Int64)3) && m_decodingTime > sf::Time::Zero)
 			{
 				flag = true;
 				
@@ -490,8 +500,6 @@ namespace sfe {
 	{
 		m_displayedFrameCount = position.asSeconds() / m_wantedFrameTime.asSeconds();
 		
-		std::cout << "calculated pos : " << m_displayedFrameCount * m_wantedFrameTime.asSeconds() << std::endl;
-		
 		if (m_parent.getStatus() == Movie::Playing)
 			m_running = 1;
 		else
@@ -502,15 +510,6 @@ namespace sfe {
 			m_backImageReady = 0;
 		}
 	}
-	
-	/*
-	void Movie_video::requestResynchronization(sf::Time position)
-	{
-		// Setting m_displayedFrameCount will make the decoder notice we're late
-		std::cout << "before resync : " << m_displayedFrameCount << std::endl; 
-		m_displayedFrameCount = position.asSeconds() / m_wantedFrameTime.asSeconds();
-		std::cout << "after resync : " << m_displayedFrameCount << std::endl;
-	}*/
 	
 	
 	bool Movie_video::preLoad(void)
@@ -577,6 +576,7 @@ namespace sfe {
 	
 	bool Movie_video::decodeFrontFrame(bool isLate)
 	{
+		sf::Lock l(m_oneDecodeAtATime);
 		// whole function takes about 50% CPU with 2048x872 definition on Mac OS X
 		// 50% (one full core) on Windows
 		int didDecodeFrame = 0;
@@ -595,26 +595,34 @@ namespace sfe {
 		int res = avcodec_decode_video2(m_codecCtx, m_rawFrame, &didDecodeFrame,
 										videoPacket); // 20% (40% of total function) on macosx; 18.3% (36% of total) on windows
 		
-		if (!isLate)
+		
+		if (res < 0)
 		{
-			if (res < 0)
+			std::cerr << "Movie_video::DecodeFrontFrame() - an error occured while decoding the video frame (code "
+			<< res << ")" << std::endl;
+		}
+		else
+		{
+			AVRational timeBase = m_parent.getAVFormatContext()->streams[m_streamID]->time_base;
+			
+			// Extract the packet timestamp
+			sf::Int64 timestamp = 0;
+			
+			timestamp = av_rescale_q(videoPacket->pts, timeBase, AV_TIME_BASE_Q) / 1000;
+			
+			if (timestamp == 0)
+				timestamp = av_rescale_q(videoPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000;
+			
+			m_latestPacketTimestamp = timestamp;
+			
+			if (m_latestPacketTimestamp == 0 && Movie::usesDebugMessages() && m_displayedFrameCount > 0)
+				std::cerr << "*** warning: Movie_video::decodeFrontFrame() - could not extract the packet timestamp" << std::endl;
+			
+			
+			if (didDecodeFrame)
 			{
-				std::cerr << "Movie_video::DecodeFrontFrame() - an error occured while decoding the video frame (code "
-				<< res << ")" << std::endl;
-			}
-			else
-			{
-				if (didDecodeFrame)
+				if (!isLate)
 				{
-					AVRational timeBase = m_parent.getAVFormatContext()->streams[m_streamID]->time_base;
-					int64_t seek_target = av_rescale_q(videoPacket->pts, timeBase, AV_TIME_BASE_Q);
-					float seconds = seek_target / 1000000.;
-					std::cout << "video pts : " << seek_target / 1000 << "ms" << std::endl;
-					std::cout << "video dts : " << av_rescale_q(videoPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000 << "ms" << std::endl;
-					
-					m_currentPTS = av_rescale_q(videoPacket->pts, timeBase, AV_TIME_BASE_Q) / 1000;
-					m_currentDTS = av_rescale_q(videoPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000;
-					
 					// Convert the frame to RGBA
 					// FIXME: crash here (in the function sws_getDefaultFilter()
 					// called by sws_scale()) when GuardMalloc is enabled, but
@@ -632,11 +640,11 @@ namespace sfe {
 					// Image loaded, reset condition state
 					flag = true;
 				}
-				else
-				{
-					if (m_parent.Movie::usesDebugMessages())
-						std::cerr << "Movie_video::DecodeFrontFrame() - frame not decoded" << std::endl;
-				}
+			}
+			else
+			{
+				// The packet does not contain enough information to give a full image
+				// (more packets will be needed)
 			}
 		}
 		

@@ -60,7 +60,9 @@ namespace sfe {
 		void preSeek(sf::Time position);
 		void postSeek(sf::Time position);
 		
-		int getStreamID();
+		int getStreamID() const;
+		AVCodecContext *getCodecContext(void) const;
+		sf::Int64 getLatestPacketTimestamp(void) const;
 		bool isStarving(void);
 		
 		bool readChunk(void);
@@ -76,7 +78,7 @@ namespace sfe {
 		bool onGetData(Chunk& Data);
 		void onSeek(sf::Time timeOffset);
 		
-	//private:
+	private:
 		// ------------------------- Audio attributes --------------------------
 		Movie& m_parent;
 		
@@ -87,6 +89,7 @@ namespace sfe {
 
 		sf::Mutex m_packetListMutex;
 		int m_streamID;
+		sf::Int64 m_latestPacketTimestamp; // The latest non-null timestamp extracted from the latest decoded audio packet
 		sf::Int16 *m_buffer; // Buffer used to store the current audio data chunk
 		unsigned m_pendingDataLength;
 		

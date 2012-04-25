@@ -162,14 +162,25 @@ namespace sfe {
 		}
 		else
 		{
-			// Workaround for https://github.com/LaurentGomila/SFML/issues/203
-			sf::SoundStream::stop();
+			std::cerr << "*** warning: Movie_audio::postSeek() - https://github.com/LaurentGomila/SFML/issues/203"
+			<< " prevents sfeMovie from keeping the audio paused when seeking. "
+			<< "This will be fixed as soon as the SFML bug is fixed." << std::endl;
 		}
 	}
 	 
-	int Movie_audio::getStreamID()
+	int Movie_audio::getStreamID() const
 	{
 		return m_streamID;
+	}
+	
+	AVCodecContext *Movie_audio::getCodecContext(void) const
+	{
+		return m_codecCtx;
+	}
+	
+	sf::Int64 Movie_audio::getLatestPacketTimestamp(void) const
+	{
+		return m_latestPacketTimestamp;
 	}
 	
 	bool Movie_audio::isStarving(void)
@@ -244,24 +255,20 @@ namespace sfe {
 			else
 			{
 				AVRational timeBase = m_parent.getAVFormatContext()->streams[m_streamID]->time_base;
-				int64_t seek_target = av_rescale_q(audioPacket->pts, timeBase, AV_TIME_BASE_Q);
-				//double seconds = seek_target / 1000000.;
 				
-				//if (m_prevPlayingOffset != getPlayingOffset())
-				{
-					/*
-					if (seek_target)
-					{
-						std::cout << "audio getPlayingOffset() = " << getPlayingOffset().asMilliseconds() << "ms" << std::endl;
-						*/
-					std::cout << "audio pts = " << seek_target / 1000 << "ms" << std::endl;
-					std::cout << "audio dts : " << av_rescale_q(audioPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000 << "ms" << std::endl;
-					/*
-						m_parent.rebaseSynchronization(sf::seconds(seconds));
-					}*/
-					
-					m_prevPlayingOffset = getPlayingOffset();
-				}
+				// Extract the packet timestamp
+				sf::Int64 timestamp = 0;
+				
+				timestamp = av_rescale_q(audioPacket->pts, timeBase, AV_TIME_BASE_Q) / 1000;
+				
+				if (timestamp == 0)
+					timestamp = av_rescale_q(audioPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000;
+				
+				if (timestamp)
+					m_latestPacketTimestamp = timestamp;
+				
+				if (m_latestPacketTimestamp == 0 && Movie::usesDebugMessages())
+					std::cerr << "*** warning: Movie_video::decodeFrontFrame() - could not extract the packet timestamp" << std::endl;
 				
 				audioPacketOffset += frame_size;
 
@@ -358,12 +365,6 @@ namespace sfe {
 				flag = false;
 			}
 			
-			/*sf::Time realTime = m_parent.getPlayingOffset();
-			sf::Time audioTime = getPlayingOffset();
-			std::cout << "real time is " << realTime.asMilliseconds()
-			<< "ms whereas audio time is " << audioTime.asMilliseconds()
-			<< "ms - diff : " << (audioTime - realTime).asMilliseconds() << "ms" << std::endl;
-			 */
 		}
 		
 		if (!flag)
