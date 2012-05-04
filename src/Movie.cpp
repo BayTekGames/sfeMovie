@@ -296,6 +296,8 @@ namespace sfe {
 
 	void Movie::setPlayingOffset(sf::Time position, SeekingMethod method)
 	{
+		//std::cout << "wanna seek to " << position.asMilliseconds() << " ms" << std::endl;
+		
 		IFAUDIO(m_audio->preSeek(position));
 		IFVIDEO(m_video->preSeek(position));
 		
@@ -558,6 +560,7 @@ namespace sfe {
 		if (m_hasVideo)
 		{
 			int videoStreamID = m_video->getStreamID();
+			sf::Int64 videoTimestamp;
 			
 			// Compute the seeking target and av_seek_frame() flags
 			AVRational timeBase = m_avFormatCtx->streams[videoStreamID]->time_base;
@@ -571,7 +574,14 @@ namespace sfe {
 				avcodec_flush_buffers(m_video->getCodecContext());
 			
 			// Update timestamp
-			m_video->loadNextImage(true);
+			printf("load = %d\n", m_video->loadNextImage(true));
+			printf("load = %d\n", m_video->loadNextImage(true));
+			printf("load = %d\n", m_video->loadNextImage(true));
+			printf("load = %d\n", m_video->loadNextImage(true));
+			videoTimestamp = m_video->getLatestPacketTimestamp();
+			
+			printf("latest timestamp : %lld\n", videoTimestamp);
+			printf("wanted timestamp : %lld\n", ref_position/1000);
 			
 			// We sought far away from the position we wanted
 			if (abs(m_video->getLatestPacketTimestamp() - (ref_position / 1000)) > 20000) // 
@@ -621,6 +631,19 @@ namespace sfe {
 				}
 				
 				// TODO: do the same as above but for audio
+				if (m_hasAudio)
+				{
+					// Register the timestamp we first got when seeking video
+					m_audio->updateTimestamp(videoTimestamp);
+					
+					while (m_audio->getLatestPacketTimestamp() < ref_position / 1000)
+					{
+						m_audio->loadSample();
+					}
+				}
+				
+				//std::cout << "final video timestamp : " << m_video->getLatestPacketTimestamp() << std::endl;
+				//std::cout << "final audio timestamp : " << m_audio->getLatestPacketTimestamp() << std::endl;
 			}
 		}
 		else if (m_hasAudio)

@@ -59,10 +59,12 @@ namespace sfe {
 		
 		void preSeek(sf::Time position);
 		void postSeek(sf::Time position);
+		void loadSample();
 		
 		int getStreamID() const;
 		AVCodecContext *getCodecContext(void) const;
 		sf::Int64 getLatestPacketTimestamp(void) const;
+		void updateTimestamp(sf::Int64 timestamp);
 		bool isStarving(void);
 		
 		bool readChunk(void);
