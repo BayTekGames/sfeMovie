@@ -540,7 +540,7 @@ namespace sfe {
 		// If our video packet list is empty, load one more video frame
 		if (!hasPendingDecodableData())
 		{
-			puts("read frame");
+			//puts("read frame");
 			if (!readFrame())
 			{
 			    // Stop if there is no more data to read
@@ -614,7 +614,7 @@ namespace sfe {
 			if (timestamp == 0)
 				timestamp = av_rescale_q(videoPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000;
 			
-			printf("new timestamp : %lld\n", timestamp);
+			//printf("new timestamp : %lld\n", timestamp);
 			m_latestPacketTimestamp = timestamp;
 			
 			if (m_latestPacketTimestamp == 0 && Movie::usesDebugMessages() && m_displayedFrameCount > 0)
@@ -662,7 +662,7 @@ namespace sfe {
 		sf::Lock l(m_packetListMutex);
 		m_packetList.push(pkt);
 		
-		puts("pushed frame");
+		//puts("pushed frame");
 	}
 	
 	void Movie_video::popFrame(void)
@@ -709,7 +709,7 @@ namespace sfe {
 			av_free_packet(pkt);
 			av_free(pkt);
 			
-			puts("flushed frame");
+			//puts("flushed frame");
 		}
 	}
 	

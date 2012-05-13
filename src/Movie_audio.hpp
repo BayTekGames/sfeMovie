@@ -59,7 +59,7 @@ namespace sfe {
 		
 		void preSeek(sf::Time position);
 		void postSeek(sf::Time position);
-		void loadSample();
+		void skipSamples(sf::Time timespan);
 		
 		int getStreamID() const;
 		AVCodecContext *getCodecContext(void) const;
@@ -93,6 +93,8 @@ namespace sfe {
 		int m_streamID;
 		sf::Int64 m_latestPacketTimestamp; // The latest non-null timestamp extracted from the latest decoded audio packet
 		sf::Int16 *m_buffer; // Buffer used to store the current audio data chunk
+		unsigned m_pendingDecodedDataLength;
+		sf::Int16 *m_pendingDecodedData;
 		unsigned m_pendingDataLength;
 		
 		unsigned m_channelsCount;

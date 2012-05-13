@@ -636,9 +636,10 @@ namespace sfe {
 					// Register the timestamp we first got when seeking video
 					m_audio->updateTimestamp(videoTimestamp);
 					
-					while (m_audio->getLatestPacketTimestamp() < ref_position / 1000)
+					if (m_audio->getLatestPacketTimestamp() < ref_position / 1000)
 					{
-						m_audio->loadSample();
+						std::cout << "need to skip " << m_audio->getLatestPacketTimestamp() - ref_position / 1000 << "ms of audio data" << std::endl;
+						m_audio->skipSamples(sf::milliseconds(m_audio->getLatestPacketTimestamp() - ref_position / 1000));
 					}
 				}
 				

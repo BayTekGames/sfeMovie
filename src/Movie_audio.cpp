@@ -40,6 +40,8 @@ namespace sfe {
 	m_packetListMutex(),
 	m_streamID(-1),
 	m_buffer(NULL),
+	m_pendingDecodedDataLength(0),
+	m_pendingDecodedData(NULL),
 	m_pendingDataLength(0),
 	m_channelsCount(0),
 	m_sampleRate(0),
@@ -167,73 +169,159 @@ namespace sfe {
 		}
 	}
 	
-	void Movie_audio::loadSample()
+	// actually load 50ms of audio data
+	void Movie_audio::skipSamples(sf::Time timespan)
 	{
-		bool flag;
+		bool flag = true;
 		
-		if (!hasPendingDecodableData())
-			flag = readChunk();
-		
-		if (flag)
+		// Do the big fast loading
+		while (timespan > sf::seconds(1) && flag)
 		{
-			int res;
-			int frame_size = AUDIO_BUFSIZ;
-			AVPacket *audioPacket = NULL;
-			
-			// Stop here if there is no frame to decode
 			if (!hasPendingDecodableData())
+				flag = readChunk();
+			
+			if (flag)
 			{
-				if (!readChunk())
+				int res;
+				int frame_size = AUDIO_BUFSIZ;
+				AVPacket *audioPacket = NULL;
+				
+				// Stop here if there is no frame to decode
+				if (!hasPendingDecodableData())
 				{
-					if (Movie::usesDebugMessages())
-						std::cerr << "Movie_audio::loadSample() - no frame currently available for decoding. Aborting decoding sequence." << std::endl;
-					return;
+					if (!readChunk())
+					{
+						if (Movie::usesDebugMessages())
+							std::cerr << "Movie_audio::loadSample() - no frame currently available for decoding. Aborting decoding sequence." << std::endl;
+						return;
+					}
+				}
+				
+				
+				// Get the front audio packet
+				audioPacket = takeFrontFrame();
+				
+				// Decode it
+				res = avcodec_decode_audio3(m_codecCtx,
+											(sf::Int16 *)((char *)m_buffer),
+											&frame_size, audioPacket);
+				
+				if (res < 0)
+				{
+					std::cerr << "Movie_audio::loadSample() - an error occured while decoding the audio frame" << std::endl;
+				}
+				else
+				{
+					AVRational timeBase = m_parent.getAVFormatContext()->streams[m_streamID]->time_base;
+					
+					// Extract the packet timestamp
+					sf::Int64 timestamp = 0;
+					
+					timestamp = av_rescale_q(audioPacket->pts, timeBase, AV_TIME_BASE_Q) / 1000;
+					
+					if (timestamp == 0)
+						timestamp = av_rescale_q(audioPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000;
+					
+					if (timestamp == 0)
+					{
+						std::cout << "timestamp updated from sampling rate" << std::endl;
+						timestamp = m_latestPacketTimestamp + frame_size / sizeof(sf::Int16) / m_channelsCount;
+					}
+					
+					if (timestamp)
+					{
+						m_latestPacketTimestamp = timestamp;
+						std::cout << "timestamp updated to " << m_latestPacketTimestamp << " ms" << std::endl;
+					}
+					
+					if (m_latestPacketTimestamp == 0 && Movie::usesDebugMessages())
+						std::cerr << "*** warning: Movie_video::decodeFrontFrame() - could not extract the packet timestamp" << std::endl;
+					
+					timespan -= sf::milliseconds(frame_size / sizeof(sf::Int16) / m_channelsCount);
 				}
 			}
+		}
+		
+		if (timespan > sf::seconds(1))
+		{
+			if (Movie::usesDebugMessages())
+				std::cerr << "Movie_audio::skipSamples() - call aborted because there is no more audio data to read" << std::endl;
+		}
+		else
+		{
+			// Do the small sample loading
+			if (!hasPendingDecodableData())
+				flag = readChunk();
 			
-			
-			// Get the front audio packet
-			audioPacket = takeFrontFrame();
-			
-			// Decode it
-			res = avcodec_decode_audio3(m_codecCtx,
-										(sf::Int16 *)((char *)m_buffer),
-										&frame_size, audioPacket);
-			
-			if (res < 0)
+			if (flag)
 			{
-				std::cerr << "Movie_audio::loadSample() - an error occured while decoding the audio frame" << std::endl;
-			}
-			else
-			{
-				AVRational timeBase = m_parent.getAVFormatContext()->streams[m_streamID]->time_base;
+				int res;
+				int frame_size = AUDIO_BUFSIZ;
+				AVPacket *audioPacket = NULL;
 				
-				// Extract the packet timestamp
-				sf::Int64 timestamp = 0;
-				
-				timestamp = av_rescale_q(audioPacket->pts, timeBase, AV_TIME_BASE_Q) / 1000;
-				
-				if (timestamp == 0)
-					timestamp = av_rescale_q(audioPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000;
-				
-				if (timestamp == 0)
+				// Stop here if there is no frame to decode
+				if (!hasPendingDecodableData())
 				{
-					std::cout << "timestamp updated from sampling rate" << std::endl;
-					timestamp = m_latestPacketTimestamp + frame_size / sizeof(sf::Int16) / m_channelsCount;
+					if (!readChunk())
+					{
+						if (Movie::usesDebugMessages())
+							std::cerr << "Movie_audio::loadSample() - no frame currently available for decoding. Aborting decoding sequence." << std::endl;
+						return;
+					}
 				}
 				
-				if (timestamp)
-				{
-					m_latestPacketTimestamp = timestamp;
-					std::cout << "timestamp updated to " << m_latestPacketTimestamp << " ms" << std::endl;
-				}
 				
-				if (m_latestPacketTimestamp == 0 && Movie::usesDebugMessages())
-					std::cerr << "*** warning: Movie_video::decodeFrontFrame() - could not extract the packet timestamp" << std::endl;
+				// Get the front audio packet
+				audioPacket = takeFrontFrame();
+				
+				// Decode it
+				res = avcodec_decode_audio3(m_codecCtx,
+											(sf::Int16 *)((char *)m_buffer),
+											&frame_size, audioPacket);
+				
+				if (res < 0)
+				{
+					std::cerr << "Movie_audio::loadSample() - an error occured while decoding the audio frame" << std::endl;
+				}
+				else
+				{
+					AVRational timeBase = m_parent.getAVFormatContext()->streams[m_streamID]->time_base;
+					
+					// Extract the packet timestamp
+					sf::Int64 timestamp = 0;
+					
+					timestamp = av_rescale_q(audioPacket->pts, timeBase, AV_TIME_BASE_Q) / 1000;
+					
+					if (timestamp == 0)
+						timestamp = av_rescale_q(audioPacket->dts, timeBase, AV_TIME_BASE_Q) / 1000;
+					
+					if (timestamp == 0)
+					{
+						std::cout << "timestamp updated from sampling rate" << std::endl;
+						timestamp = m_latestPacketTimestamp + frame_size / sizeof(sf::Int16) / m_channelsCount;
+					}
+					
+					if (timestamp)
+					{
+						m_latestPacketTimestamp = timestamp;
+						std::cout << "timestamp updated to " << m_latestPacketTimestamp << " ms" << std::endl;
+					}
+					
+					if (m_latestPacketTimestamp == 0 && Movie::usesDebugMessages())
+						std::cerr << "*** warning: Movie_video::decodeFrontFrame() - could not extract the packet timestamp" << std::endl;
+					
+					if (sf::milliseconds(frame_size / sizeof(sf::Int16) / m_channelsCount) > timespan)
+					{
+						sf::Time diff = sf::milliseconds(frame_size / sizeof(sf::Int16) / m_channelsCount) - timespan;
+						unsigned samplesCount = diff.asSeconds() * getSampleRate() / getChannelCount();
+						
+						std::cout << "finish audio skipping with " << samplesCount << " samples to store" << std::endl;
+					}
+				}
 			}
 		}
 	}
-	 
+	
 	int Movie_audio::getStreamID() const
 	{
 		return m_streamID;
@@ -270,7 +358,7 @@ namespace sfe {
 		
 		return (currentlyPendingDataLength() != 0);
 	}
-		
+	
 	bool Movie_audio::hasPendingDecodableData(void)
 	{
 		sf::Lock l(m_packetListMutex);
@@ -342,7 +430,7 @@ namespace sfe {
 					std::cerr << "*** warning: Movie_video::decodeFrontFrame() - could not extract the packet timestamp" << std::endl;
 				
 				audioPacketOffset += frame_size;
-
+				
 				if (m_codecCtx->sample_fmt != SAMPLE_FMT_S16)
 				{
 					// Never happened to me for now, which is fine
@@ -360,7 +448,7 @@ namespace sfe {
 			av_free(audioPacket);
 		}
 	}
-		
+	
 	void Movie_audio::pushFrame(AVPacket *pkt)
 	{
 		sf::Lock l(m_packetListMutex);
@@ -446,7 +534,7 @@ namespace sfe {
 		
         return flag;
     }
-
+	
 	
 	void Movie_audio::onSeek(sf::Time timeOffset)
 	{
